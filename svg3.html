@@ -1,0 +1,684 @@
+<!--
+	任意に作った閉ループの上で、SVGオブジェクトを動かす
+-->
+<!doctype html>
+<html xml:lang="ja-JP">
+<head>
+<meta charset="UTF-8">
+<title>drive SVG objects on closed path</title>
+
+<!--
+<script type="text/javascript" src="js/jquery-3.4.1.min.js"></script>
+<script type="text/javascript" src="svg-segmentize.js"></script>
+<script type="text/javascript" src="https://github.com/mayakraft/svg-segmentize/blob/svg-segmentize.js"></script>
+
+-->
+<script src="https://code.jquery.com/jquery-3.7.1.js"></script>
+<script type="text/javascript" src="https://raw.githubusercontent.com/mayakraft/svg-segmentize/master/src/segmentize.js"></script>
+
+
+</head>
+
+<body>
+
+<button id="dButton">Draw</button>&nbsp;&nbsp;
+<button id="cButton">Clear</button>&nbsp;&nbsp;
+<button id="sButton">Start</button>&nbsp;&nbsp;
+<button id="pButton">Perpendicular</button>&nbsp;&nbsp;
+<br/>
+<br/>
+<button id="sButton0">Start</button>&nbsp;<label><input id="speedSlider0" type="range" min="5" max="60" step="1" value="30">Center</label><br/>
+<button id="sButton1">Start</button>&nbsp;<label><input id="speedSlider1" type="range" min="5" max="60" step="1" value="30">In</label><br/>
+<button id="sButton2">Start</button>&nbsp;<label><input id="speedSlider2" type="range" min="5" max="60" step="1" value="30">Out</label><br/>
+
+<svg id="svgElement" width="800" height="500" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid black;"></svg>
+
+<script>
+const DEBUG = false;
+// --------------------------------------------------------------------------------
+// move function
+// --------------------------------------------------------------------------------
+
+//曲線上を移動するオブジェクト
+class MoveObject {
+constructor(id, points, q0) {
+	this.id = id;
+	this.points = points;
+	this.q0 = q0;
+	this.mG = document.getElementById(id);
+	this.moveStop = false;
+	this.ig = 0;
+	this.speed = 30;//デフォルト
+	this.init();
+}
+
+/*
+	多角形の面積，重心(図心)，断面Ｎ次モーメントの公式と，向き (頂点列の回転方向) の判別方法
+	多角形座標の右回り、左回り
+		https://www5d.biglobe.ne.jp/~noocyte/Programming/Geometry/PolygonMoment-jp.html
+*/
+init() {
+	let s = 0;
+	for (let i = 0; i < this.points.length - 2; i++) {
+		s += this.points[i].x * this.points[i + 1].y - this.points[i + 1].x * this.points[i].y;
+	}
+	if (s < 0) clockwise = false;
+if (DEBUG) console.log('clockwise', clockwise, s);
+}
+
+/*
+	How is setTimeout called in a for loop js?
+		https://stackoverflow.com/questions/63076634/how-is-settimeout-called-in-a-for-loop-js
+*/
+async move() {
+	if (this.moveStop) return;
+	while (true) {
+		if (this.moveStop) break;
+		for (; this.ig < this.q0.length - 1; this.ig++) {
+			if (this.moveStop) break;
+			await this.delay(this.speed);
+			let tt = 'translate(' + this.q0[this.ig].x + ',' + (this.q0[this.ig].y) + ') rotate(' + (this.q0[this.ig].degree - 180) + ')';
+			this.mG.setAttribute('transform', tt);
+		}
+			if (this.ig >= this.q0.length - 1) this.ig = 0;
+	}
+}
+
+setSpeed(sp) {
+	this.speed = sp;
+}
+
+start() {
+	this.moveStop = false;
+	this.move();
+}
+
+stop() {
+	this.moveStop = true;
+}
+
+getQ() {
+	return this.q0;
+}
+
+delay(ms) {
+	return new Promise((resolve,reject) => setTimeout(resolve, ms));
+}
+
+}//end of MyObject
+
+// --------------------------------------------------------------------------------
+// convert points to segments
+// --------------------------------------------------------------------------------
+let segLen = 3;//length of segment
+
+function points2curve2Segments(points, svgElement) {
+/*
+	Smoothly close an SVG path with JavaScript
+		https://stackoverflow.com/questions/76702965/smoothly-close-an-svg-path-with-javascript
+*/
+	function points2closedPath(points) {
+		let smoothing = 0.15;
+		let pathData = getCurvePathData(points, smoothing, true);
+
+		// serialize pathData to d attribute string
+		let dd = pathDataToD(pathData, 1);
+if (DEBUG) console.log('dd', dd);
+
+		return dd;
+	}//end of points2closedPath
+
+	// Render the svg <path> element
+	function getCurvePathData(points, smoothing = 0.2, closed = true) {
+		// append first 2 points for closed paths
+		if (closed) {
+			points = points.concat(points.slice(0, 2));
+		}
+
+		// Properties of a line
+		const line = (pointA, pointB) => {
+			const lengthX = pointB.x - pointA.x;
+			const lengthY = pointB.y - pointA.y;
+			return {
+				length: Math.sqrt(Math.pow(lengthX, 2) + Math.pow(lengthY, 2)),
+				angle: Math.atan2(lengthY, lengthX)
+			};
+		};
+
+		// Position of a control point
+		const controlPoint = (current, previous, next, reverse) => {
+			const p = previous || current;
+			const n = next || current;
+			const o = line(p, n);
+
+			const angle = o.angle + (reverse ? Math.PI : 0);
+			const length = o.length * smoothing;
+
+			const x = current.x + Math.cos(angle) * length;
+			const y = current.y + Math.sin(angle) * length;
+			return {x, y};
+		};
+
+		let pathData = [];
+		pathData.push({type: "M", values: [points[0].x, points[0].y]});
+
+		for (let i = 1; i < points.length; i++) {
+			let point = points[i];
+			const cp1 = controlPoint(points[i - 1], points[i - 2], point);
+			const cp2 = controlPoint(point, points[i - 1], points[i + 1], true);
+			const command = {
+				type: "C",
+				values: [cp1.x, cp1.y, cp2.x, cp2.y, point.x, point.y]
+			};
+
+			pathData.push(command);
+		}
+
+		// copy last commands 1st controlpoint to first curveto
+		if (closed) {
+			let comLast = pathData[pathData.length - 1];
+			let valuesLastC = comLast.values;
+			let valuesFirstC = pathData[1].values;
+
+			pathData[1] = {
+				type: "C",
+				values: [valuesLastC[0], valuesLastC[1], valuesFirstC.slice(2)].flat()
+			};
+			// delete last curveto
+			pathData = pathData.slice(0, pathData.length - 1); 
+		}
+
+		return pathData;
+	}//end of getCurvePathData
+
+	// convert pathdata to d attribute string
+	function pathDataToD(pathData, decimals = 3) {
+		let d = pathData
+		.map((com) => {
+			return `${com.type}${com.values.map(value => {return +value.toFixed(decimals)}).join(" ")}`;
+		})
+		.join(" ");
+		return d;
+	}//end of pathDataToD
+
+/*
+	SVG segmentize
+		https://www.npmjs.com/package/svg-segmentize
+*/
+	function closedPath2Segments(pathLen, closedPath) {
+		let nn = Math.floor((pathLen / segLen));
+if (DEBUG) console.log('nn', nn);
+		let svg = `<svg id="svgElem" width="${W}" height="${H}"><path fill="none" stroke="black" d="${closedPath}"></path></svg>`;
+
+		const simpleElement = (new DOMParser()).parseFromString(svg, "text/xml").documentElement;
+if (DEBUG) console.log('simple', simpleElement);
+		let segmented = Segmentize(simpleElement, {input: "svg", output: "svg", resolution: {path: nn}});
+
+if (DEBUG) console.log(segmented);
+		let l = segmented.getElementsByTagName('line');
+
+		let Dist = 0;
+		let x = parseFloat(l[0].getAttribute('x1'));
+		let y = parseFloat(l[0].getAttribute('y1'));
+		let x0;
+		let y0;
+		let dl = 'M' + x + ',' + y + ' ';
+		let dd = [];
+		q0.push({x: parseFloat(l[0].getAttribute('x1')), y: parseFloat(l[0].getAttribute('y1')), dist: 0, degree: 0});
+		for (let i = 0; i < l.length; i++) {
+			x = parseFloat(l[i].getAttribute('x2'));
+			y = parseFloat(l[i].getAttribute('y2'));
+			x0 = q0.slice(-1)[0].x;
+			y0 = q0.slice(-1)[0].y;
+			let dist = Math.sqrt((x0 - x) * (x0 - x) + (y0 - y) * (y0 - y));
+			dd.push(dist);
+			Dist += dist;
+			let radian = Math.atan2(y - y0, x - x0);
+			let degree = radian * (180 / Math.PI);
+			q0.push({x: x, y: y, degree: degree, dist: Dist});
+			dl += 'L' + x + ',' + y + ' ';
+if (DEBUG) console.log(i, x.toFixed(3), y.toFixed(3), Dist.toFixed(3), dist.toFixed(3), degree.toFixed(3));
+		}
+			x = q0[0].x;
+			y = q0[0].y;
+			let dist = Math.sqrt((x0 - x) * (x0 - x) + (y0 - y) * (y0 - y));
+			dd.push(dist);
+			let radian = Math.atan2(y - y0, x - x0);
+			let degree = radian * (180 / Math.PI);
+		q0[0] = {x: parseFloat(l[0].getAttribute('x1')), y: parseFloat(l[0].getAttribute('y1')), dist: dist, degree: degree};
+		dl += 'Z';
+if (DEBUG) {
+console.log('dl', dl);
+console.log('max', max(dd));
+console.log('min', min(dd));
+console.log('av', avr(dd));
+console.log('stdev', stdev(dd));
+}
+		return dl;
+	}//end of closedPath2Segments
+
+/*
+	[Javascript] 一次元配列から最大値、最小値、平均、合計、分散、標準偏差を算出する
+		https://coconala.com/blogs/2250855/168443
+*/
+	const max = arr => arr.sort((a, b) => b - a)[0];
+	const min = arr => arr.sort((a, b) => a - b)[0];
+	const avr = arr => arr.reduce((a, b) => a + b) / arr.length;
+	const stdev = arr => {
+		const avr = arr.reduce((a, b) => a + b) / arr.length;
+		const Var = arr.reduce((a, b) => (a + ((b - avr) ** 2)), 0) / arr.length;
+		return Math.sqrt(Var);
+	};
+
+// --------------------------
+
+	let closedPath = points2closedPath(points);
+	let pathLen = pathD(closedPath, 'red', 'p3', svgElement);//pathの長さを求める
+if (DEBUG) console.log('pathL', pathLen);
+	$('#p3').remove();
+
+	let q0 = [];
+	let dl = closedPath2Segments(pathLen, closedPath);
+
+	pathD(dl, 'green', 'p2', svgElement);//pathの表示
+
+	return q0;
+}//end of points2curve2Segments
+
+// --------------------------------------------------------------------------------
+// calculate perpendicular
+// --------------------------------------------------------------------------------
+
+//曲線に沿った垂線上（Perpendicular line）の点座標を求める
+//直線p0-p1に対し、p0-p1の中点mから伸びる垂線で、距離dist離れた座標を２つ求める
+//閉ループが時計回りか、反時計回りかで、垂線上の2点で、内側に位置するか、外側に位置するか、判別できる。
+function perpendicular(p0, p1, dist, svg) {
+	let x;
+	let y;
+	let m = {};
+	m.x = (p1.x + p0.x) / 2;
+	m.y = (p1.y + p0.y) / 2;
+	let a;
+
+	if ((p1.x - p0.x) == 0) {
+		x = dist;
+		y = 0;
+	}
+	else if ((p1.y - p0.y) == 0) {
+		x = 0;
+		y = dist;
+	}
+	else {
+		a = - (p1.x - p0.x) / (p1.y - p0.y);
+		x = Math.sqrt(dist * dist / (1 + a * a));
+		y = a * x;
+	}
+	let pv = (p1.x - p0.x) * y - (p1.y - p0.y) * x;//外積
+	if (DEBUG) circleD(m.x, m.y, 3, 'red', 'a', svg);
+
+	let In = {};
+	let Out = {};
+	if (clockwise) {
+		if (pv > 0) {
+			if (DEBUG) {
+				circleD(m.x + x, m.y + y, 3, 'blue', 'a', svg);//inside
+				circleD(m.x - x, m.y - y, 3, 'green', 'a', svg);//outside
+			}
+			In = {x: m.x + x, y: m.y + y};//inside
+			Out = {x: m.x - x, y: m.y - y};//outside
+		}
+		else {
+			if (DEBUG) {
+			circleD(m.x + x, m.y + y, 3, 'green', 'a', svg);//outside
+				circleD(m.x - x, m.y - y, 3, 'blue', 'a', svg);//inside
+				}
+			Out = {x: m.x + x, y: m.y + y};//outside
+			In = {x: m.x - x, y: m.y - y};//inside
+		}
+	}
+	else {
+		if (pv > 0) {
+			if (DEBUG) {
+				circleD(m.x + x, m.y + y, 3, 'green', 'a', svg);//outside
+				circleD(m.x - x, m.y - y, 3, 'blue', 'a', svg);//inside
+			}
+			Out = {x: m.x + x, y: m.y + y};//outside
+			In = {x: m.x - x, y: m.y - y};//inside
+		}
+		else {
+			if (DEBUG) {
+				circleD(m.x + x, m.y + y, 3, 'blue', 'a', svg);///inside
+				circleD(m.x - x, m.y - y, 3, 'green', 'a', svg);//outside
+			}
+			In = {x: m.x + x, y: m.y + y};///inside
+			Out = {x: m.x - x, y: m.y - y};//outside
+		}
+	}
+	if (DEBUG) {
+		lineD(m.x, m.y, m.x + x, m.y + y, 'gray', 'b', svg);
+		lineD(m.x, m.y, m.x - x, m.y - y, 'gray', 'b', svg);
+	}
+	return [In, Out];
+}//end of perpendicular
+
+// --------------------------------------------------------------------------------
+// draw function
+// --------------------------------------------------------------------------------
+
+function lineD(x1, y1, x2, y2, color, id, svg) {
+	let line = document.createElementNS("http://www.w3.org/2000/svg", "line")
+	$(line).attr({
+		id: id,
+		x1: x1,
+		y1: y1,
+		x2: x2,
+		y2: y2
+	}).css({
+		stroke: color,
+		'stroke-width': "2px"
+	});
+	svg.append(line);
+}
+
+function circleD(x, y, r, color, id, svg) {
+	let circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+	$(circle).attr({
+		id: id,
+		cx: x,
+		cy: y,
+		r: r,
+	}).css({
+		fill: color,
+		stroke: color
+	});
+	svg.append(circle);
+}
+
+function pathD(d, color, id, svg) {
+	let path = document.createElementNS("http://www.w3.org/2000/svg", 'path');
+	$(path).attr({
+		id: id,
+		d: d,
+	}).css({
+		fill: 'none',
+		stroke: color,
+		"stroke-dasharray": "2"
+	});
+	svg.append(path);
+	var len = path.getTotalLength();
+	return len;
+}
+
+/*
+	ベジェ曲線
+		https://zenn.dev/baroqueengine/books/a19140f2d9fc1a/viewer/13ad2f
+*/
+function drawBezier(a, b, c, d, col, svg) {
+	let ad = Math.sqrt((a.x - d.x) * (a.x - d.x) + (a.y - d.y) * (a.y - d.y)).toFixed(3);
+	let last;
+	if (q1.length > 5) last = q1.slice(-2)[0];
+
+	let prev = a;
+	let distance = 0;
+
+	const n = Math.floor(ad / 5);
+	for (let i = 0; i <= n; i++) {
+		const t = i / n;
+		const dx = calcBezier3(a.x, b.x, c.x, d.x, t);
+		const dy = calcBezier3(a.y, b.y, c.y, d.y, t);
+		if (i != 0) q1.push({x: dx, y: dy})
+		lineD(prev.x, prev.y, dx, dy, col, svg);
+		if (i == 1 && last) {
+			lineD(last.x, last.y, dx, dy, 'pink', svg);
+			let d = Math.sqrt((last.x - dx) * (last.x - dx) + (last.y - dy) * (last.y - dy));
+		}
+		distance += Math.sqrt((prev.x - dx) * (prev.x - dx) + (prev.y - dy) * (prev.y - dy));
+
+		prev = {x: dx, y: dy};
+	}
+	return distance;
+}
+
+// --------------------------------------------------------------------------------
+// main routine
+// --------------------------------------------------------------------------------
+
+let svgElement = document.getElementById('svgElement');
+let W = svgElement.getAttribute('width');
+let H = svgElement.getAttribute('height');
+if (DEBUG) console.log('W H', W, H);
+
+let points = [];
+let points1 = [];//in
+let points2 = [];//out
+
+let clockwise = true;//svg座標系でs > 0
+let moveObject;
+let moveObject1;
+let moveObject2;
+
+$("#dButton").on("click", () => {
+	if (points.length < 1) return;
+	if (moveObject) return;
+//多角形の削除
+	for (let i = 0; i < points.length; i++) $('#l' + i).remove();
+	for (let i = 0; i < points.length; i++) $('#c' + i).remove();
+
+	let g = document.createElementNS("http://www.w3.org/2000/svg", "g");//移動するSVGオブジェクト
+	$(g).attr({
+		id: 'moveG'
+	});
+	let poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+	$(poly).attr({
+		points: "0 0, 15 -3, 15 3"
+	});
+	g.append(poly)
+	svgElement.appendChild(g);
+
+	let q0 = points2curve2Segments(points, svgElement);
+	moveObject = new MoveObject('moveG', points, q0);
+});
+
+$("#cButton").on("click", () => {
+	if (points.length < 1) return;
+	$("#sButton").text('Start');
+	$("#sButton0").text('Start');
+	$("#sButton1").text('Start');
+	$("#sButton2").text('Start');
+	if (moveObject) moveObject.stop();
+	$("#svgElement").empty();
+	$('#speedSlider0').val(30);
+	$('#speedSlider1').val(30);
+	$('#speedSlider2').val(30);
+	points = [];
+	points1 = [];
+	points2 = [];
+	moveObject = null;
+	moveObject1 = null;
+	moveObject2 = null;
+});
+
+$("#sButton").on("click", () => {
+	if (points.length < 1) return;
+	if (!moveObject) return;
+	if ($("#sButton").text() == 'Start') {
+		$("#sButton").text('Stop');
+		$("#sButton0").text('Stop');
+		$("#sButton1").text('Stop');
+		$("#sButton2").text('Stop');
+		if (moveObject) moveObject.start();
+		if (moveObject1) moveObject1.start();
+		if (moveObject2) moveObject2.start();
+	}
+	else {
+		$("#sButton").text('Start');
+		$("#sButton0").text('Start');
+		$("#sButton1").text('Start');
+		$("#sButton2").text('Start');
+		if (moveObject) moveObject.stop();
+		if (moveObject1) moveObject1.stop();
+		if (moveObject2) moveObject2.stop();
+	}
+});
+
+$("#sButton0").on("click", () => {
+	if (points.length < 1) return;
+	if (!moveObject) return;
+	if ($("#sButton0").text() == 'Start') {
+		$("#sButton0").text('Stop');
+		if ($("#sButton1").text() == 'Stop' && $("#sButton2").text() == 'Stop') $("#sButton").text('Stop');
+		moveObject.start();
+	}
+	else {
+		$("#sButton0").text('Start');
+		if ($("#sButton1").text() == 'Start' && $("#sButton2").text() == 'Start') $("#sButton").text('Start');
+		moveObject.stop();
+	}
+});
+
+$("#sButton1").on("click", () => {
+	if (points.length < 1) return;
+	if (!moveObject1) return;
+	if ($("#sButton1").text() == 'Start') {
+		$("#sButton1").text('Stop');
+		if ($("#sButton0").text() == 'Stop' && $("#sButton2").text() == 'Stop') $("#sButton").text('Stop');
+		moveObject1.start();
+	}
+	else {
+		$("#sButton1").text('Start');
+		if ($("#sButton0").text() == 'Start' && $("#sButton2").text() == 'Start') $("#sButton").text('Start');
+		moveObject1.stop();
+	}
+});
+
+$("#sButton2").on("click", () => {
+	if (points.length < 1) return;
+	if (!moveObject2) return;
+	if ($("#sButton2").text() == 'Start') {
+		$("#sButton2").text('Stop');
+		if ($("#sButton0").text() == 'Stop' && $("#sButton1").text() == 'Stop') $("#sButton").text('Stop');
+		moveObject2.start();
+	}
+	else {
+		$("#sButton2").text('Start');
+		if ($("#sButton0").text() == 'Start' && $("#sButton1").text() == 'Start') $("#sButton").text('Start');
+		moveObject2.stop();
+	}
+});
+
+$("#pButton").on("click", () => {
+	if (!moveObject) return;
+	let q = moveObject.getQ();
+	let j = 0;
+	for (let i = 0; i < points.length; i++) {
+		for (; j < q.length - 1; j++) {
+			let d = (points[i].x - q[j].x) * (points[i].x - q[j].x) + (points[i].y - q[j].y) * (points[i].y - q[j].y); 
+			if (d < 10) {
+if (DEBUG) console.log(j, d.toFixed(2), points[i].x, points[i].y, q[j].x, q[j].y);
+				points[i].nx = q[j].x;
+				points[i].ny = q[j].y;
+				points[i].nq = j;
+				points[i].dist2 = d;
+				j++;
+				break;
+			}
+		}
+	}
+
+	for (let i = 0; i < points.length; i++) {
+		let nq = points[i].nq;
+		let n0 = nq - 1;
+		let n1 = nq + 1;
+		if (n0 < 0) n0 = q.length - 1;
+		if (n1 >= q.length) n1 = 0;
+		lineD(q[n0].x, q[n0].y, q[n1].x, q[n1].y, 'pink', 'l' + i, svgElement);
+		let data = perpendicular(q[n0], q[n1], 10, svgElement);
+		points1[i] = data[0];//In
+		points2[i] = data[1];//Out
+	}
+
+	if (points1.length < 1) return;
+	let g = document.createElementNS("http://www.w3.org/2000/svg", "g");//移動するSVGオブジェクト
+	$(g).attr({
+		id: 'moveG1'
+	});
+	let poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+	$(poly).attr({
+		points: "0 0, 15 -3, 15 3"
+	});
+	g.append(poly)
+	svgElement.appendChild(g);
+	let q1 = points2curve2Segments(points1, svgElement);
+	moveObject1 = new MoveObject('moveG1', points1, q1);
+
+	if (points2.length < 1) return;
+	g = document.createElementNS("http://www.w3.org/2000/svg", "g");//移動するSVGオブジェクト
+	$(g).attr({
+		id: 'moveG2'
+	});
+	poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+	$(poly).attr({
+		points: "0 0, 15 -3, 15 3"
+	});
+	g.append(poly)
+	svgElement.appendChild(g);
+	let q2 = points2curve2Segments(points2, svgElement);
+	moveObject2 = new MoveObject('moveG2', points2, q2);
+});
+
+$('#speedSlider0').on('input change', function() {
+	if (points.length < 1) return;
+	if (!moveObject) return;
+	moveObject.setSpeed(60 - $(this).val());
+});
+
+$('#speedSlider1').on('input change', function() {
+	if (points.length < 1) return;
+	if (!moveObject1) return;
+	moveObject1.setSpeed(60 - $(this).val());
+});
+
+$('#speedSlider2').on('input change', function() {
+	if (points.length < 1) return;
+	if (!moveObject2) return;
+	moveObject2.setSpeed(60 - $(this).val());
+});
+
+// --------------------------
+
+// ポイントの設定
+$("#svgElement").mousedown(function(event) {
+	let x = parseInt(event.pageX - $("#svgElement").position().left); //SVG上のマウス座標(横方向)の取得
+	let y = parseInt(event.pageY - $("#svgElement").position().top); //SVG上のマウス座標(縦方向)の取得
+	points.push({x: x, y: y});
+if (DEBUG) console.log(x, y);
+
+	$("#svgElement").empty();
+
+	if (points.length > 2) {
+		for (let i = 0; i < points.length - 1; i++) {
+			lineD(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, 'green', 'l' + i, svgElement);
+		}
+		lineD(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, 'green', 'l' + (points.length - 1), svgElement);
+		for (let i = 0; i < points.length; i++) {
+			circleD(points[i].x, points[i].y, 3, 'red', 'c' + i, svgElement);
+		}
+	}
+	else if (points.length == 2) {
+		lineD(points[0].x, points[0].y, points[1].x, points[1].y, 'green', 'b', svgElement);
+		circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
+		circleD(points[1].x, points[1].y, 3, 'red', 'a', svgElement);
+	}
+	else if (points.length == 1) {
+		circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
+	}
+});
+
+// mouseup
+$("#svgElement").mouseup(function(event) {
+	$("#svgElement").off("mousemove");
+});
+</script>
+
+</body>
+</html>
