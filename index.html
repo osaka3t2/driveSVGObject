@@ -14,7 +14,7 @@
 
 -->
 <script src="https://code.jquery.com/jquery-3.7.1.js"></script>
-<script type="text/javascript" src="https://raw.githubusercontent.com/mayakraft/svg-segmentize/master/src/segmentize.js"></script>
+<script type="text/javascript" src="svg-segmentize.js"></script>
 
 
 </head>
@@ -22,6 +22,7 @@
 <body>
 
 <button id="dButton">Draw</button>&nbsp;&nbsp;
+<button id="eButton">Edit</button>&nbsp;&nbsp;
 <button id="cButton">Clear</button>&nbsp;&nbsp;
 <button id="sButton">Start</button>&nbsp;&nbsp;
 <button id="pButton">Perpendicular</button>&nbsp;&nbsp;
@@ -446,6 +447,7 @@ function drawBezier(a, b, c, d, col, svg) {
 let svgElement = document.getElementById('svgElement');
 let W = svgElement.getAttribute('width');
 let H = svgElement.getAttribute('height');
+let mode = null;
 if (DEBUG) console.log('W H', W, H);
 
 let points = [];
@@ -458,6 +460,7 @@ let moveObject1;
 let moveObject2;
 
 $("#dButton").on("click", () => {
+	mode = 'draw';
 	if (points.length < 1) return;
 	if (moveObject) return;
 //多角形の削除
@@ -479,7 +482,8 @@ $("#dButton").on("click", () => {
 	moveObject = new MoveObject('moveG', points, q0);
 });
 
-$("#cButton").on("click", () => {
+$("#eButton").on("click", () => {
+	mode = 'edit';
 	if (points.length < 1) return;
 	$("#sButton").text('Start');
 	$("#sButton0").text('Start');
@@ -490,6 +494,36 @@ $("#cButton").on("click", () => {
 	$('#speedSlider0').val(30);
 	$('#speedSlider1').val(30);
 	$('#speedSlider2').val(30);
+	points1 = [];
+	points2 = [];
+	moveObject = null;
+	moveObject1 = null;
+	moveObject2 = null;
+	if (points.length > 2) {
+		for (let i = 0; i < points.length - 1; i++) {
+			lineD(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, 'green', 'l' + i, svgElement);
+		}
+		lineD(points[points.length - 1].x, points[points.length - 1].y, points[0].x, points[0].y, 'green', 'l' + (points.length - 1), svgElement);
+		for (let i = 0; i < points.length; i++) {
+			circleD(points[i].x, points[i].y, 10, 'red', 'c' + i, svgElement);
+		}
+	}
+});
+
+$("#cButton").on("click", () => {
+	mode = 'clear';
+	if (points.length < 1) return;
+	$("#sButton").text('Start');
+	$("#sButton0").text('Start');
+	$("#sButton1").text('Start');
+	$("#sButton2").text('Start');
+	if (moveObject) moveObject.stop();
+	$("#svgElement").empty();
+	$('#speedSlider0').val(30);
+	$('#speedSlider1').val(30);
+	$('#speedSlider2').val(30);
+	np = 0;
+
 	points = [];
 	points1 = [];
 	points2 = [];
@@ -499,6 +533,7 @@ $("#cButton").on("click", () => {
 });
 
 $("#sButton").on("click", () => {
+	mode = 'start';
 	if (points.length < 1) return;
 	if (!moveObject) return;
 	if ($("#sButton").text() == 'Start') {
@@ -522,6 +557,7 @@ $("#sButton").on("click", () => {
 });
 
 $("#sButton0").on("click", () => {
+	mode = 'start0';
 	if (points.length < 1) return;
 	if (!moveObject) return;
 	if ($("#sButton0").text() == 'Start') {
@@ -537,6 +573,7 @@ $("#sButton0").on("click", () => {
 });
 
 $("#sButton1").on("click", () => {
+	mode = 'start1';
 	if (points.length < 1) return;
 	if (!moveObject1) return;
 	if ($("#sButton1").text() == 'Start') {
@@ -552,6 +589,7 @@ $("#sButton1").on("click", () => {
 });
 
 $("#sButton2").on("click", () => {
+	mode = 'start2';
 	if (points.length < 1) return;
 	if (!moveObject2) return;
 	if ($("#sButton2").text() == 'Start') {
@@ -567,6 +605,7 @@ $("#sButton2").on("click", () => {
 });
 
 $("#pButton").on("click", () => {
+	mode = 'per';
 	if (!moveObject) return;
 	let q = moveObject.getQ();
 	let j = 0;
@@ -644,40 +683,105 @@ $('#speedSlider2').on('input change', function() {
 	moveObject2.setSpeed(60 - $(this).val());
 });
 
-// --------------------------
+// mousedown, mousemove, mouseup --------------------------
 
-// ポイントの設定
+let _isMoving = false; //移動中かどうかのフラグ true:移動中 false:停止中
+let _clickX, _clickY; //クリックされた位置
+let np = 0;
+let px, py;
+let targetId;
+let targetNum;
+let position = $('#svgElement').position();
+
 $("#svgElement").mousedown(function(event) {
-	let x = parseInt(event.pageX - $("#svgElement").position().left); //SVG上のマウス座標(横方向)の取得
-	let y = parseInt(event.pageY - $("#svgElement").position().top); //SVG上のマウス座標(縦方向)の取得
-	points.push({x: x, y: y});
+	if (mode == 'edit') {// ポイントの位置編集
+		if (_isMoving) return; //移動中の場合は処理しない
+		_isMoving = true; //移動中にする
+
+		//クリックされた座標を保持します
+		_clickX = event.pageX;
+		_clickY = event.pageY;
+		//クリックされた時の座標から要素を取得します
+		for (let i = 0; i < points.length; i++) {
+			let x = points[i].x + position.left;
+			let y = points[i].y + position.top;
+			if ((x - 10 <= _clickX && _clickX <= x + 10) && (y - 10 <= _clickY && _clickY <= y + 10)) {
+				targetId = points[i].id;
+				targetNum = i;
+				break;
+			}
+		}
+		if (!targetId) return;
+
+		px = parseInt($('#' + targetId).attr('cx'));
+		py = parseInt($('#' + targetId).attr('cy'));
+	}
+	else {// ポイントの設定
+		let x = parseInt(event.pageX - $("#svgElement").position().left); //SVG上のマウス座標(横方向)の取得
+		let y = parseInt(event.pageY - $("#svgElement").position().top); //SVG上のマウス座標(縦方向)の取得
+		points.push({x: x, y: y, id: 'c' + np++});
 if (DEBUG) console.log(x, y);
 
-	$("#svgElement").empty();
-
-	if (points.length > 2) {
-		for (let i = 0; i < points.length - 1; i++) {
-			lineD(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, 'green', 'l' + i, svgElement);
+		$("#svgElement").empty();
+	
+		if (points.length > 2) {
+			for (let i = 0; i < points.length - 1; i++) {
+				lineD(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, 'green', 'l' + i, svgElement);
+			}
+			lineD(points[points.length - 1].x, points[points.length - 1].y, points[0].x, points[0].y, 'green', 'l' + (points.length - 1), svgElement);
+			for (let i = 0; i < points.length; i++) {
+				circleD(points[i].x, points[i].y, 3, 'red', 'c' + i, svgElement);
+			}
 		}
-		lineD(points[0].x, points[0].y, points[points.length - 1].x, points[points.length - 1].y, 'green', 'l' + (points.length - 1), svgElement);
-		for (let i = 0; i < points.length; i++) {
-			circleD(points[i].x, points[i].y, 3, 'red', 'c' + i, svgElement);
+		else if (points.length == 2) {
+			lineD(points[0].x, points[0].y, points[1].x, points[1].y, 'green', 'b', svgElement);
+			circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
+			circleD(points[1].x, points[1].y, 3, 'red', 'a', svgElement);
 		}
-	}
-	else if (points.length == 2) {
-		lineD(points[0].x, points[0].y, points[1].x, points[1].y, 'green', 'b', svgElement);
-		circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
-		circleD(points[1].x, points[1].y, 3, 'red', 'a', svgElement);
-	}
-	else if (points.length == 1) {
-		circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
+		else if (points.length == 1) {
+			circleD(points[0].x, points[0].y, 3, 'red', 'a', svgElement);
+		}
 	}
 });
 
 // mouseup
 $("#svgElement").mouseup(function(event) {
-	$("#svgElement").off("mousemove");
+	if (mode == 'edit') {
+	if (_isMoving == false) return; //移動中でない場合は処理しない
+		_isMoving = false; //停止中にする
+		_clickX = null;
+		_clickY = null;
+		targetId = null;
+		px = null;
+		py = null;
+	}
 });
+
+$("#svgElement").mousemove(function(event) {
+	if (mode == 'edit') {
+		if (_isMoving == false) return; //移動中でない場合は処理しない
+		if (!targetId) return; //移動中でない場合は処理しない
+		if (!_clickX) return;
+		if (!_clickY) return;
+
+		//クリックされた時の要素の座標に、移動量を加算したものを、座標として設定します
+		let id = parseInt(targetId.substring(1));
+		let x = px + (event.pageX - _clickX);
+		let y = py + (event.pageY - _clickY);
+		points[targetNum].x = x;
+		points[targetNum].y = y;
+		$('#' + targetId).attr('cx', x);
+		$('#' + targetId).attr('cy', y);
+
+		let n0 = (id - 1) < 0 ? points.length - 1 : (id - 1);
+		let n1 = id;
+		$("#l" + n0).attr('x2', x);
+		$("#l" + n0).attr('y2', y);
+		$("#l" + n1).attr('x1', x);
+		$("#l" + n1).attr('y1', y);
+	}
+});
+
 </script>
 
 </body>
