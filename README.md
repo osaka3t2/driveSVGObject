@@ -29,7 +29,7 @@ https://osaka3t2.github.io/moveSVGObject/
 - 左のStart/Stopボタンを選択すると、対応するSVGオブジェクトが動いたり、止まったりします。
 
 ## Reference
-[Smoothly close an SVG path with JavaScript](https://stackoverflow.com/questions/76702965/smoothly-close-an-svg-path-with-javascript)
-[SVG segmentize](https://www.npmjs.com/package/svg-segmentize)
-[多角形座標の右回り、左回り](https://www5d.biglobe.ne.jp/~noocyte/Programming/Geometry/PolygonMoment-jp.html)
+- [Smoothly close an SVG path with JavaScript](https://stackoverflow.com/questions/76702965/smoothly-close-an-svg-path-with-javascript)
+- [SVG segmentize](https://www.npmjs.com/package/svg-segmentize)
+- [多角形座標の右回り、左回り](https://www5d.biglobe.ne.jp/~noocyte/Programming/Geometry/PolygonMoment-jp.html)
 
