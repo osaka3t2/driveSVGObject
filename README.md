@@ -27,3 +27,8 @@ https://osaka3t2.github.io/moveSVGObject/
 - Stopボタンを選択すると、SVGオブジェクトが止まります。
 - スライダーバーを動かすと、SVGオブジェクトの速度が変化します。
 - 左のStart/Stopボタンを選択すると、対応するSVGオブジェクトが動いたり、止まったりします。
+
+## Reference
+- https://stackoverflow.com/questions/76702965/smoothly-close-an-svg-path-with-javascript
+- https://www.npmjs.com/package/svg-segmentize
+- https://www5d.biglobe.ne.jp/~noocyte/Programming/Geometry/PolygonMoment-jp.html
